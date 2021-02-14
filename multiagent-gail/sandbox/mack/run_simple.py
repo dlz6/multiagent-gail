@@ -9,7 +9,7 @@ from rl import bench
 from rl import logger
 from rl.common import set_global_seeds
 from rl.common.vec_env.subproc_vec_env import SubprocVecEnv
-from sandbox.mack.acktr_disc import learn
+from sandbox.mack.acktr_multi_disc import learn
 from sandbox.mack.policies import CategoricalPolicy
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = ''
@@ -27,7 +27,8 @@ def train(logdir, env_id, num_timesteps, lr, timesteps_per_batch, seed, num_cpu)
             return env
         return _thunk
 
-    logger.configure(logdir, format_strs=['stdout', 'log', 'json', 'tensorboard'])
+    logger.configure(logdir, format_strs=['stdout', 'log', 'json'])
+    # logger.configure(logdir, format_strs=['stdout', 'log', 'json', 'tensorboard'])
     
     set_global_seeds(seed)
     env = SubprocVecEnv([create_env(i) for i in range(num_cpu)], is_multi_agent=True)
@@ -52,12 +53,14 @@ def main(logdir, env, lr, seed, batch_size, atlas):
     seeds = [seed]
     batch_sizes = [batch_size]
 
-    print('logging to: ' + logdir)
+
 
     for env_id, seed, lr, batch_size in itertools.product(env_ids, seeds, lrs, batch_sizes):
-        train(logdir + '/exps/mack/' + env_id + '/l-{}-b-{}/seed-{}'.format(lr, batch_size, seed),
+        # train(logdir + '/exps/mack/' + env_id + '/l-{}-b-{}/seed-{}'.format(lr, batch_size, seed),
+        train('/Users/dongliangzuo/Desktop/multiagent-gail/multiagent-gail/logs',
               env_id, 5e7, lr, batch_size, seed, batch_size // 250)
 
+# /Users/dongliangzuo/anaconda3/bin/python -m sandbox.mack.run_simple --env simple_crypto
 
 if __name__ == "__main__":
     main()

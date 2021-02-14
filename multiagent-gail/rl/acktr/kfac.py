@@ -1,6 +1,7 @@
 import re
 from functools import reduce
-
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from rl.acktr.kfac_utils import *
 
 KFAC_OPS = ['MatMul', 'Conv2D', 'BiasAdd']
@@ -10,7 +11,7 @@ KFAC_DEBUG = True
 class KfacOptimizer():
 
     def __init__(self, learning_rate=0.01, momentum=0.9, clip_kl=0.01, kfac_update=2, stats_accum_iter=60,
-                 full_stats_init=False, cold_iter=100, cold_lr=None, async=False, async_stats=False, epsilon=1e-2,
+                 full_stats_init=False, cold_iter=100, cold_lr=None, asyncs=False, asyncs_stats=False, epsilon=1e-2,
                  stats_decay=0.95, blockdiag_bias=False, channel_fac=False, factored_damping=False, approxT2=False,
                  use_float64=False, weight_decay_dict={},max_grad_norm=0.5):
         self.max_grad_norm = max_grad_norm
@@ -19,8 +20,8 @@ class KfacOptimizer():
         self._clip_kl = clip_kl
         self._channel_fac = channel_fac
         self._kfac_update = kfac_update
-        self._async = async
-        self._async_stats = async_stats
+        self._asyncs = asyncs
+        self._asyncs_stats = asyncs_stats
         self._epsilon = epsilon
         self._stats_decay = stats_decay
         self._blockdiag_bias = blockdiag_bias
@@ -56,7 +57,7 @@ class KfacOptimizer():
         self.stats_eigen = {}
 
     def getFactors(self, g, varlist):
-        graph = tf.get_default_graph()
+        graph = tf.compat.v1.get_default_graph()
         factorTensors = {}
         fpropTensors = []
         bpropTensors = []
@@ -254,7 +255,7 @@ class KfacOptimizer():
                             if not self._blockdiag_bias and self.stats[var]['assnBias']:
                                 fpropFactor_size += 1
 
-                            slot_fpropFactor_stats = tf.Variable(tf.diag(tf.ones(
+                            slot_fpropFactor_stats = tf.Variable(tf.linalg.diag(tf.ones(
                                 [fpropFactor_size])) * self._diag_init_coeff, name='KFAC_STATS/' + fpropFactor.op.name, trainable=False)
                             self.stats[var]['fprop_concat_stats'].append(
                                 slot_fpropFactor_stats)
@@ -270,7 +271,7 @@ class KfacOptimizer():
                         # using homogeneous coordinates
                         if not((not self._blockdiag_bias) and self.stats[var]['assnWeights']):
                             if bpropFactor not in tmpStatsCache:
-                                slot_bpropFactor_stats = tf.Variable(tf.diag(tf.ones([bpropFactor.get_shape(
+                                slot_bpropFactor_stats = tf.Variable(tf.linalg.diag(tf.ones([bpropFactor.get_shape(
                                 )[-1]])) * self._diag_init_coeff, name='KFAC_STATS/' + bpropFactor.op.name, trainable=False)
                                 self.stats[var]['bprop_concat_stats'].append(
                                     slot_bpropFactor_stats)
@@ -416,11 +417,11 @@ class KfacOptimizer():
 
                     # assume sampled loss is averaged. TO-DO:figure out better
                     # way to handle this
-                    bpropFactor *= tf.to_float(B)
+                    bpropFactor *= tf.cast(B, tf.float32)
                     ##
 
                     cov_b = tf.matmul(
-                        bpropFactor, bpropFactor, transpose_a=True) / tf.to_float(tf.shape(bpropFactor)[0])
+                        bpropFactor, bpropFactor, transpose_a=True) / tf.cast(tf.shape(bpropFactor)[0], tf.float32)
 
                     updateOps.append(cov_b)
                     statsUpdates[stats_var] = cov_b
@@ -428,7 +429,7 @@ class KfacOptimizer():
 
         if KFAC_DEBUG:
             aKey = list(statsUpdates.keys())[0]
-            statsUpdates[aKey] = tf.Print(statsUpdates[aKey],
+            statsUpdates[aKey] = tf.print(statsUpdates[aKey],
                                           [tf.convert_to_tensor('step:'),
                                            self.global_step,
                                            tf.convert_to_tensor(
@@ -453,8 +454,8 @@ class KfacOptimizer():
             # tf.group(*self._apply_stats(stats_list, varlist)), tf.no_op)
             return tf.group(*self._apply_stats(statsUpdates))
 
-        if self._async_stats:
-            # asynchronous stats update
+        if self._asyncs_stats:
+            # asyncshronous stats update
             update_stats = self._apply_stats(statsUpdates)
 
             queue = tf.FIFOQueue(1, [item.dtype for item in update_stats], shapes=[
@@ -480,21 +481,21 @@ class KfacOptimizer():
             stats_new = statsUpdates[stats_var]
             if accumulate:
                 # simple superbatch averaging
-                update_op = tf.assign_add(
+                update_op = tf.compat.v1.assign_add(
                     stats_var, accumulateCoeff * stats_new, use_locking=True)
             else:
                 # exponential running averaging
-                update_op = tf.assign(
+                update_op = tf.compat.v1.assign(
                     stats_var, stats_var * self._stats_decay, use_locking=True)
-                update_op = tf.assign_add(
+                update_op = tf.compat.v1.assign_add(
                     update_op, (1. - self._stats_decay) * stats_new, use_locking=True)
             updateOps.append(update_op)
 
         with tf.control_dependencies(updateOps):
-            stats_step_op = tf.assign_add(self.stats_step, 1)
+            stats_step_op = tf.compat.v1.assign_add(self.stats_step, 1)
 
         if KFAC_DEBUG:
-            stats_step_op = (tf.Print(stats_step_op,
+            stats_step_op = (tf.print(stats_step_op,
                                       [tf.convert_to_tensor('step:'),
                                        self.global_step,
                                        tf.convert_to_tensor('fac step:'),
@@ -594,7 +595,7 @@ class KfacOptimizer():
             if KFAC_DEBUG:
                 self.eigen_update_list = [item for item in updateOps]
                 with tf.control_dependencies(updateOps):
-                    updateOps.append(tf.Print(tf.constant(
+                    updateOps.append(tf.print(tf.constant(
                         0.), [tf.convert_to_tensor('computed factor eigen')]))
 
         return updateOps
@@ -611,7 +612,7 @@ class KfacOptimizer():
             factor_step_op = tf.assign_add(self.factor_step, 1)
             updateOps.append(factor_step_op)
             if KFAC_DEBUG:
-                updateOps.append(tf.Print(tf.constant(
+                updateOps.append(tf.print(tf.constant(
                     0.), [tf.convert_to_tensor('updated kfac factors')]))
         return updateOps
 
@@ -735,11 +736,11 @@ class KfacOptimizer():
                         coeffs *= e
                     coeffs += damping
 
-                #grad = tf.Print(grad, [tf.convert_to_tensor('1'), tf.convert_to_tensor(var.name), grad.get_shape()])
+                #grad = tf.print(grad, [tf.convert_to_tensor('1'), tf.convert_to_tensor(var.name), grad.get_shape()])
 
                 grad /= coeffs
 
-                #grad = tf.Print(grad, [tf.convert_to_tensor('2'), tf.convert_to_tensor(var.name), grad.get_shape()])
+                #grad = tf.print(grad, [tf.convert_to_tensor('2'), tf.convert_to_tensor(var.name), grad.get_shape()])
                 #####
                 # project gradient back to euclidean space
                 for idx, stats in enumerate(self.stats[var]['fprop_concat_stats']):
@@ -751,7 +752,7 @@ class KfacOptimizer():
                     grad = gmatmul(grad, Q, transpose_b=True, reduce_dim=idx)
                 ##
 
-                #grad = tf.Print(grad, [tf.convert_to_tensor('3'), tf.convert_to_tensor(var.name), grad.get_shape()])
+                #grad = tf.print(grad, [tf.convert_to_tensor('3'), tf.convert_to_tensor(var.name), grad.get_shape()])
                 if (self.stats[var]['assnBias'] is not None) and not self._blockdiag_bias:
                     # use homogeneous coordinates only works for 2D grad.
                     # TO-DO: figure out how to factorize bias grad
@@ -768,7 +769,7 @@ class KfacOptimizer():
                     grad_dict[var_assnBias] = grad_assnBias
                     grad = grad_assnWeights
 
-                #grad = tf.Print(grad, [tf.convert_to_tensor('4'), tf.convert_to_tensor(var.name), grad.get_shape()])
+                #grad = tf.print(grad, [tf.convert_to_tensor('4'), tf.convert_to_tensor(var.name), grad.get_shape()])
                 if GRAD_RESHAPE:
                     grad = tf.reshape(grad, GRAD_SHAPE)
 
@@ -781,7 +782,7 @@ class KfacOptimizer():
             ### clipping ###
             if KFAC_DEBUG:
                 print(('apply clipping to %s' % (var.name)))
-            tf.Print(grad, [tf.sqrt(tf.reduce_sum(tf.pow(grad, 2)))], "Euclidean norm of new grad")
+            tf.print(grad, [tf.sqrt(tf.reduce_sum(tf.pow(grad, 2)))], "Euclidean norm of new grad")
             local_vg = tf.reduce_sum(grad * g * (self._lr * self._lr))
             vg += local_vg
 
@@ -791,7 +792,7 @@ class KfacOptimizer():
 
         scaling = tf.minimum(1., tf.sqrt(self._clip_kl / vg))
         if KFAC_DEBUG:
-            scaling = tf.Print(scaling, [tf.convert_to_tensor(
+            scaling = tf.print(scaling, [tf.convert_to_tensor(
                 'clip: '), scaling, tf.convert_to_tensor(' vFv: '), vg])
         with tf.control_dependencies([tf.assign(self.vFv, vg)]):
             updatelist = [grad_dict[var] for var in varlist]
@@ -816,8 +817,8 @@ class KfacOptimizer():
 
         qr = None
         # launch eigen-decomp on a queue thread
-        if self._async:
-            print('Use async eigen decomp')
+        if self._asyncs:
+            print('Use asyncs eigen decomp')
             # get a list of factor loading tensors
             factorOps_dummy = self.computeStatsEigen()
 
@@ -842,20 +843,20 @@ class KfacOptimizer():
             assert self._update_stats_op != None
             updateOps.append(self._update_stats_op)
             dependency_list = []
-            if not self._async:
+            if not self._asyncs:
                 dependency_list.append(self._update_stats_op)
 
             with tf.control_dependencies(dependency_list):
                 def no_op_wrapper():
                     return tf.group(*[tf.assign_add(self.cold_step, 1)])
 
-                if not self._async:
+                if not self._asyncs:
                     # synchronous eigen-decomp updates
                     updateFactorOps = tf.cond(tf.logical_and(tf.equal(tf.mod(self.stats_step, self._kfac_update),
                                                                       tf.convert_to_tensor(0)),
                                                              tf.greater_equal(self.stats_step, self._stats_accum_iter)), lambda: tf.group(*self.applyStatsEigen(self.computeStatsEigen())), no_op_wrapper)
                 else:
-                    # asynchronous eigen-decomp updates using queue
+                    # asyncshronous eigen-decomp updates using queue
                     updateFactorOps = tf.cond(tf.greater_equal(self.stats_step, self._stats_accum_iter),
                                               lambda: tf.cond(tf.equal(queue.size(), tf.convert_to_tensor(0)),
                                                               tf.no_op,
@@ -910,7 +911,7 @@ class KfacOptimizer():
             coldOptim_op = coldOptim.apply_gradients(sgd_grads)
             if KFAC_DEBUG:
                 with tf.control_dependencies([sgd_step_op, coldOptim_op]):
-                    sgd_step_op = tf.Print(
+                    sgd_step_op = tf.print(
                         sgd_step_op, [self.sgd_step, tf.convert_to_tensor('doing cold sgd step')])
             return tf.group(*[sgd_step_op, coldOptim_op])
 

@@ -1,5 +1,6 @@
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 import rl.common.tf_util as U
 from rl.acktr.utils import conv, fc, dense, conv_to_fc, sample, kl_div
@@ -9,8 +10,10 @@ class CategoricalPolicy(object):
     def __init__(self, sess, ob_space, ac_space, ob_spaces, ac_spaces,
                  nenv, nsteps, nstack, reuse=False, name='model'):
         nbatch = nenv * nsteps
-        ob_shape = (nbatch, ob_space.shape[0] * nstack)
-        all_ob_shape = (nbatch, sum([obs.shape[0] for obs in ob_spaces]) * nstack)
+        ob_shape = (nbatch, np.array(ob_space).shape[0] * nstack)
+        all_ob_shape = (nbatch, sum([np.array(obs).shape[0] for obs in ob_spaces]) * nstack)
+        ac_space = ac_space[0]
+        ac_spaces = ac_spaces[0]
         nact = ac_space.n
         all_ac_shape = (nbatch, (sum([ac.n for ac in ac_spaces]) - nact) * nstack)
         X = tf.placeholder(tf.float32, ob_shape)  # obs

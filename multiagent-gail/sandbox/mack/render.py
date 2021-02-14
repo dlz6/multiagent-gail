@@ -2,7 +2,8 @@ import gym
 import click
 import rl.common.tf_util as U
 import multiagent
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import make_env
 import gym.spaces
 import numpy as np
